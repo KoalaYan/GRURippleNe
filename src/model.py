@@ -16,6 +16,10 @@ class RippleNet(nn.Module):
         self.relation_emb = nn.Embedding(self.n_relation, self.dim * self.dim)
         self.transform_matrix = nn.Linear(self.dim, self.dim, bias=False)
         self.criterion = nn.BCELoss()
+        
+        nn.init.xavier_normal_(self.entity_emb.weight)
+        nn.init.xavier_normal_(self.relation_emb.weight)
+        nn.init.xavier_normal_(self.transform_matrix.weight)
 
     def _parse_args(self, args, n_entity, n_relation):
         self.n_entity = n_entity

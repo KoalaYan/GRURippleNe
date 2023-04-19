@@ -6,22 +6,30 @@ import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 
 
-class RippleNet(nn.Module):
+class GRURippleNet(nn.Module):
     def __init__(self, args, n_entity, n_relation):
-        super(RippleNet, self).__init__()
+        super(GRURippleNet, self).__init__()
 
-        self._parse_args(args, n_entity, n_relation)
+        self.parse_args(args, n_entity, n_relation)
 
         self.entity_emb = nn.Embedding(self.n_entity, self.dim)
         self.relation_emb = nn.Embedding(self.n_relation, self.dim * self.dim)
-        self.transform_matrix = nn.Linear(self.dim, self.dim, bias=False)
+        self.transform_matrix = nn.GRU(self.dim, self.dim)
         self.criterion = nn.BCELoss()
-        
+
         nn.init.xavier_normal_(self.entity_emb.weight)
         nn.init.xavier_normal_(self.relation_emb.weight)
-        nn.init.xavier_normal_(self.transform_matrix.weight)
 
-    def _parse_args(self, args, n_entity, n_relation):
+        for name, param in self.transform_matrix.named_parameters():
+            if 'bias' in name:
+                 nn.init.constant_(param, 0.0)
+            elif 'weight_ih' in name:
+                 nn.init.kaiming_normal_(param)
+            elif 'weight_hh' in name:
+                 nn.init.orthogonal_(param)
+
+
+    def parse_args(self, args, n_entity, n_relation):
         self.n_entity = n_entity
         self.n_relation = n_relation
         self.dim = args.dim
@@ -30,7 +38,6 @@ class RippleNet(nn.Module):
         self.l2_weight = args.l2_weight
         self.lr = args.lr
         self.n_memory = args.n_memory
-        self.item_update_mode = args.item_update_mode
         self.using_all_hops = args.using_all_hops
 
     def forward(
@@ -58,19 +65,19 @@ class RippleNet(nn.Module):
             # [batch size, n_memory, dim]
             t_emb_list.append(self.entity_emb(memories_t[i]))
 
-        o_list, item_embeddings = self._key_addressing(
+        o_list, item_embeddings = self.key_addressing(
             h_emb_list, r_emb_list, t_emb_list, item_embeddings
         )
         scores = self.predict(item_embeddings, o_list)
 
-        return_dict = self._compute_loss(
+        return_dict = self.compute_loss(
             scores, labels, h_emb_list, t_emb_list, r_emb_list
         )
         return_dict["scores"] = scores
 
         return return_dict
 
-    def _compute_loss(self, scores, labels, h_emb_list, t_emb_list, r_emb_list):
+    def compute_loss(self, scores, labels, h_emb_list, t_emb_list, r_emb_list):
         base_loss = self.criterion(scores, labels.float())
 
         kge_loss = 0
@@ -96,46 +103,24 @@ class RippleNet(nn.Module):
         loss = base_loss + kge_loss + l2_loss
         return dict(base_loss=base_loss, kge_loss=kge_loss, l2_loss=l2_loss, loss=loss)
 
-    def _key_addressing(self, h_emb_list, r_emb_list, t_emb_list, item_embeddings):
+    def key_addressing(self, h_emb_list, r_emb_list, t_emb_list, item_embeddings):
         o_list = []
-        for hop in range(self.n_hop):
-            # [batch_size, n_memory, dim, 1]
-            h_expanded = torch.unsqueeze(h_emb_list[hop], dim=3)
+        for hop in range(self.n_hop):            
+            h_expanded = torch.unsqueeze(h_emb_list[hop], dim=3) # [batch_size, n_memory, dim, 1]
+            Rh = torch.squeeze(torch.matmul(r_emb_list[hop], h_expanded)) # [batch_size, n_memory, dim]           
+            v = torch.unsqueeze(item_embeddings, dim=2) # [batch_size, dim, 1]           
+            probs = torch.squeeze(torch.matmul(Rh, v)) # [batch_size, n_memory]            
+            probs_normalized = F.softmax(probs, dim=1) # [batch_size, n_memory]   
+            probs_expanded = torch.unsqueeze(probs_normalized, dim=2) # [batch_size, n_memory, 1]
+            o = (t_emb_list[hop] * probs_expanded).sum(dim=1) # [batch_size, dim]
 
-            # [batch_size, n_memory, dim]
-            Rh = torch.squeeze(torch.matmul(r_emb_list[hop], h_expanded))
+            if hop == 0:
+                item_embeddings, h_i = self.transform_matrix(item_embeddings)
+            else:
+                item_embeddings, h_i = self.transform_matrix(item_embeddings, h_i)
 
-            # [batch_size, dim, 1]
-            v = torch.unsqueeze(item_embeddings, dim=2)
-
-            # [batch_size, n_memory]
-            probs = torch.squeeze(torch.matmul(Rh, v))
-
-            # [batch_size, n_memory]
-            probs_normalized = F.softmax(probs, dim=1)
-
-            # [batch_size, n_memory, 1]
-            probs_expanded = torch.unsqueeze(probs_normalized, dim=2)
-
-            # [batch_size, dim]
-            o = (t_emb_list[hop] * probs_expanded).sum(dim=1)
-
-            item_embeddings = self._update_item_embedding(item_embeddings, o)
             o_list.append(o)
         return o_list, item_embeddings
-
-    def _update_item_embedding(self, item_embeddings, o):
-        if self.item_update_mode == "replace":
-            item_embeddings = o
-        elif self.item_update_mode == "plus":
-            item_embeddings = item_embeddings + o
-        elif self.item_update_mode == "replace_transform":
-            item_embeddings = self.transform_matrix(o)
-        elif self.item_update_mode == "plus_transform":
-            item_embeddings = self.transform_matrix(item_embeddings + o)
-        else:
-            raise Exception("Unknown item updating mode: " + self.item_update_mode)
-        return item_embeddings
 
     def predict(self, item_embeddings, o_list):
         y = o_list[-1]

@@ -14,7 +14,7 @@ class GRURippleNet(nn.Module):
 
         self.entity_emb = nn.Embedding(self.n_entity, self.dim)
         self.relation_emb = nn.Embedding(self.n_relation, self.dim * self.dim)
-        self.transform_matrix = nn.RNN(self.dim, self.dim)
+        self.transform_matrix = nn.GRU(self.dim, self.dim)
         self.criterion = nn.BCELoss()
 
         nn.init.xavier_normal_(self.entity_emb.weight)

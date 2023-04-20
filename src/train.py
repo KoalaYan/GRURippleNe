@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from model import RippleNet
+from model import GRURippleNet
 
 
 def train(args, data_info, show_loss):
@@ -12,7 +12,7 @@ def train(args, data_info, show_loss):
     n_relation = data_info[4]
     ripple_set = data_info[5]
 
-    model = RippleNet(args, n_entity, n_relation)
+    model = GRURippleNet(args, n_entity, n_relation)
     if args.use_cuda:
         model.cuda()
     optimizer = torch.optim.Adam(

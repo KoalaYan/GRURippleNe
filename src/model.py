@@ -14,7 +14,7 @@ class GRURippleNet(nn.Module):
 
         self.entity_emb = nn.Embedding(self.n_entity, self.dim)
         self.relation_emb = nn.Embedding(self.n_relation, self.dim * self.dim)
-        self.transform_matrix = nn.GRU(self.dim, self.dim)
+        self.transform_matrix = nn.RNN(self.dim, self.dim)
         self.criterion = nn.BCELoss()
 
         nn.init.xavier_normal_(self.entity_emb.weight)
@@ -24,9 +24,9 @@ class GRURippleNet(nn.Module):
             if 'bias' in name:
                  nn.init.constant_(param, 0.0)
             elif 'weight_ih' in name:
-                 nn.init.kaiming_normal_(param)
+                 nn.init.xavier_normal_(param)
             elif 'weight_hh' in name:
-                 nn.init.orthogonal_(param)
+                 nn.init.xavier_normal_(param)
 
 
     def parse_args(self, args, n_entity, n_relation):
